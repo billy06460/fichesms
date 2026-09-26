@@ -337,6 +337,8 @@
     flex-wrap: wrap;
   }
   .form-head-title { display: flex; align-items: center; gap: 10px; }
+  .autosave-status { font-size: 12px; color: var(--success); opacity: 0; transition: opacity .25s; white-space: nowrap; }
+  .autosave-status.show { opacity: 1; }
   .form-head h2 {
     font-family: var(--mono-tag);
     font-weight: 600;
@@ -1334,6 +1336,7 @@
 
     Array.prototype.forEach.call(list.querySelectorAll('.mission-card'), function(el){
       el.addEventListener('click', function(){
+        flushAutoSave();
         activeId = el.getAttribute('data-id');
         renderAll();
       });
@@ -1395,6 +1398,7 @@
         '<div class="form-head-title">' +
           '<span class="plate-chip">' + (esc(m.plate) || "NOUVELLE FICHE") + '</span>' +
           '<h2>Fiche mission</h2>' +
+          '<span class="autosave-status" id="autosaveStatus" aria-live="polite"></span>' +
         '</div>' +
         '<div class="form-actions">' +
           '<button class="btn btn-danger btn-sm" id="btnDelete">Supprimer</button>' +
@@ -1488,8 +1492,6 @@
       '<div class="save-bar" id="saveBar">' +
         '<span class="hint" id="saveHint" style="align-self:center;margin-right:auto;">Faites défiler jusqu\'en bas de la fiche pour valider.</span>' +
         '<div class="save-bar-actions" id="saveBarActions">' +
-          '<button class="btn" id="btnPdf">📄 PDF</button>' +
-          '<button class="btn" id="btnDraft">Sauvegarde temporaire</button>' +
           '<button class="btn btn-primary" id="btnSave">Valider et envoyer</button>' +
         '</div>' +
       '</div>';
@@ -1580,13 +1582,11 @@
       if (newInputs.length) newInputs[newInputs.length - 1].focus();
     });
 
+    // Le <label> coche déjà la case nativement : on se contente de suivre son état
     Array.prototype.forEach.call(document.querySelectorAll('.check-item'), function(item){
-      item.addEventListener('click', function(e){
-        if (e.target.tagName !== 'INPUT'){
-          var cb = item.querySelector('input');
-          cb.checked = !cb.checked;
-        }
-        item.classList.toggle('on', item.querySelector('input').checked);
+      var cb = item.querySelector('input');
+      cb.addEventListener('change', function(){
+        item.classList.toggle('on', cb.checked);
       });
     });
 
@@ -1614,6 +1614,7 @@
           }
           if (remaining === 0){
             photoInput.value = "";
+            scheduleAutoSave(m);
           }
         });
       });
@@ -1621,8 +1622,7 @@
     wirePhotoRemoval(m);
 
     document.getElementById('btnSave').addEventListener('click', function(){ validateAndSend(m); });
-    document.getElementById('btnDraft').addEventListener('click', function(){ saveDraft(m); });
-    document.getElementById('btnPdf').addEventListener('click', function(){ exportMissionPdf(m); });
+    wireAutoSave(m);
   }
 
   function wirePhotoRemoval(m){
@@ -1633,6 +1633,7 @@
         m.photos = m.photos.filter(function(p){ return p.id !== pid; });
         document.getElementById('photoGrid').innerHTML = renderPhotos(m);
         wirePhotoRemoval(m);
+        scheduleAutoSave(m);
       });
     });
     Array.prototype.forEach.call(document.querySelectorAll('.photo-thumb img'), function(img){
@@ -1688,13 +1689,66 @@
     return saveMissions();
   }
 
-  function saveDraft(m){
-    var ok = persistForm(m);
-    renderAll();
-    if (ok) showToast('Sauvegarde temporaire effectuée.');
+  // ---------- sauvegarde automatique à chaque saisie ----------
+  var autoSaveTimer = null;
+  var autoSaveMission = null;
+
+  function scheduleAutoSave(m){
+    autoSaveMission = m;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(flushAutoSave, 400);
   }
 
+  // Enregistre immédiatement ce qui est en attente (avant de changer de fiche,
+  // quand l'app passe en arrière-plan, etc.)
+  function flushAutoSave(){
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+    var m = autoSaveMission;
+    autoSaveMission = null;
+    if (!m || !document.getElementById('f-plate')) return;
+    if (persistForm(m)){
+      renderList();
+      var chip = document.querySelector('.form-head-title .plate-chip');
+      if (chip) chip.textContent = m.plate || 'NOUVELLE FICHE';
+      var st = document.getElementById('autosaveStatus');
+      if (st){
+        st.textContent = '✓ Enregistré';
+        st.classList.add('show');
+        clearTimeout(st._t);
+        st._t = setTimeout(function(){ st.classList.remove('show'); }, 1500);
+      }
+    }
+  }
+
+  function wireAutoSave(m){
+    var panel = document.querySelector('.form-body');
+    if (!panel) return;
+    // Toute frappe ou modification d'un champ (texte, nombres, date, interrupteur, cases)
+    panel.addEventListener('input', function(){ scheduleAutoSave(m); });
+    panel.addEventListener('change', function(){ scheduleAutoSave(m); });
+    // Boutons qui modifient la fiche sans événement "input" (état du véhicule,
+    // équipements, ajout/suppression de plein ou de photo)
+    panel.addEventListener('click', function(e){
+      if (e.target.closest('.state-pill, .check-item, #btnAddFuel, .rm-fuel, [data-rm]')){
+        setTimeout(function(){ scheduleAutoSave(m); }, 0);
+      }
+    });
+    // Un champ quitté : on enregistre tout de suite
+    panel.addEventListener('focusout', function(){
+      if (autoSaveMission) flushAutoSave();
+    });
+  }
+
+  // App mise en arrière-plan ou fermée : rien ne doit être perdu
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'hidden') flushAutoSave();
+  });
+  window.addEventListener('pagehide', flushAutoSave);
+
   function validateAndSend(m){
+    clearTimeout(autoSaveTimer);
+    autoSaveMission = null;
     var ok = persistForm(m);
     renderAll();
     if (ok){
@@ -1719,6 +1773,8 @@
     document.getElementById('delCancel').addEventListener('click', function(){ root.innerHTML = ""; });
     document.getElementById('delBackdrop').addEventListener('click', function(e){ if (e.target.id === 'delBackdrop') root.innerHTML = ""; });
     document.getElementById('delConfirm').addEventListener('click', function(){
+      clearTimeout(autoSaveTimer);
+      autoSaveMission = null;
       missions = missions.filter(function(m){ return m.id !== id; });
       if (activeId === id) activeId = null;
       saveMissions();
@@ -1729,6 +1785,7 @@
   }
 
   function createMission(){
+    flushAutoSave();
     var m = blankMission();
     missions.push(m);
     activeId = m.id;
@@ -2457,6 +2514,15 @@
     return 'jpg';
   }
 
+  function errDetail(err){
+    try { return (err && (err.message || err.errorMessage)) ? (err.message || err.errorMessage) : JSON.stringify(err); }
+    catch(e){ return String(err); }
+  }
+
+  var sendingInProgress = false;
+
+  // Envoi 100 % automatique : l'app fabrique et envoie elle-même un MMS par
+  // adresse (fiche PDF jointe), sans ouvrir l'application Messages.
   function sendMissionBySms(m){
     var emails = getDestEmails();
     if (!emails.length){
@@ -2464,46 +2530,82 @@
       openSettingsModal(function(){ sendMissionBySms(m); });
       return;
     }
-    var email = emails.join(',');
+    if (sendingInProgress){ showToast('Envoi déjà en cours…'); return; }
 
+    if (!hasSmsComposer()){
+      showToast("L'envoi automatique n'est possible que dans l'application Android.");
+      return;
+    }
+    var SmsComposer = getNativeSmsComposer();
+    var btn = document.getElementById('btnSave');
+    function setBusy(busy){
+      sendingInProgress = busy;
+      if (btn){ btn.disabled = busy; btn.textContent = busy ? 'Envoi en cours…' : 'Valider et envoyer'; }
+    }
+
+    setBusy(true);
     showToast('Préparation du PDF…');
+    var rawName = m.missionNumber ? m.missionNumber : (m.plate || 'sans_numero');
+    var pdfFilename = rawName.replace(/[\\/:*?"<>|]+/g, '-') + '.pdf';
+    var text = buildMessageBodyText(m);
+    var subject = 'Fiche mission ' + (m.plate || '') + (m.missionNumber ? ' - ' + m.missionNumber : '');
+    var attachments = [];
+
     buildStyledMissionPDFAsync(m).then(function(doc){
       return appendPhotoPagesAsync(doc, m);
     }).then(function(doc){
-    var rawName = m.missionNumber ? m.missionNumber : (m.plate || 'sans_numero');
-    var baseName = rawName.replace(/[\\/:*?"<>|]+/g, '-');
-    var pdfFilename = baseName + '.pdf';
-    var text = buildMessageBodyText(m);
-
-    // Application SMS native du téléphone, uniquement (pas de menu de partage)
-    if (hasSmsComposer()){
-      var SmsComposer = getNativeSmsComposer();
-      var attachments = [];
-      var prep = Promise.resolve();
-      if (doc){
-        prep = prep.then(function(){ return blobToBase64(doc.output('blob')); })
-          .then(function(b64){ attachments.push({ data: b64, name: pdfFilename }); });
+      return doc ? blobToBase64(doc.output('blob')) : null;
+    }).then(function(b64){
+      if (b64) attachments.push({ data: b64, name: pdfFilename });
+      showToast(emails.length > 1 ? 'Envoi des 2 MMS en cours…' : 'Envoi du MMS en cours…', 60000);
+      return SmsComposer.sendMms({ to: emails, subject: subject.trim(), body: text, attachments: attachments });
+    }).then(function(res){
+      setBusy(false);
+      var results = (res && res.results) || [];
+      var ok = results.filter(function(r){ return r.ok; });
+      var failed = results.filter(function(r){ return !r.ok; });
+      if (!failed.length){
+        m.lastSentAt = new Date().toISOString();
+        saveMissions();
+        showToast(ok.length > 1
+          ? 'Fiche envoyée par MMS aux 2 adresses.'
+          : 'Fiche envoyée par MMS à ' + ok[0].to + '.', 5000);
+        return;
       }
-      prep.then(function(){
-        return SmsComposer.composeSms({ to: email, body: text, attachments: attachments });
-      }).then(function(){
-        showToast(emails.length > 1
-          ? 'Message prêt pour les 2 adresses. Si elles n\'apparaissent pas, elles sont copiées : collez-les.'
-          : 'Message prêt. Si l\'adresse n\'apparaît pas, elle est copiée : collez-la dans le destinataire.', 7000);
-      }).catch(function(err){
-        console.error('SmsComposer failed', err);
-        var detail = "";
-        try { detail = (err && (err.message || err.errorMessage)) ? (err.message || err.errorMessage) : JSON.stringify(err); }
-        catch(e2){ detail = String(err); }
-        window.alert("L'ouverture de l'application SMS a échoué.\n\nDétail exact (à me communiquer) :\n" + detail);
-      });
-      return;
-    }
-
-    // Hors application Android (navigateur) : seul le texte peut être prérempli
-    window.location.href = 'sms:' + encodeURIComponent(email).replace(/%40/g, '@') + '?body=' + encodeURIComponent(text);
-    showToast("Pièces jointes indisponibles hors de l'application Android.");
+      var msg = (ok.length ? 'Envoyé à : ' + ok.map(function(r){ return r.to; }).join(', ') + '\n\n' : '') +
+        'Échec pour :\n' + failed.map(function(r){ return '• ' + r.to + ' — ' + (r.error || ('code ' + r.code)); }).join('\n') +
+        '\n\nOuvrir l\'application Messages pour envoyer manuellement ?';
+      if (window.confirm(msg)) openMessagesFallback(SmsComposer, failed.map(function(r){ return r.to; }), text, attachments);
+    }).catch(function(err){
+      setBusy(false);
+      console.error('sendMms failed', err);
+      var msg = "L'envoi automatique a échoué :\n" + errDetail(err) + "\n\nOuvrir l'application Messages pour envoyer manuellement ?";
+      if (window.confirm(msg)) openMessagesFallback(SmsComposer, emails, text, attachments);
     });
+  }
+
+  // Secours : ouvre Messages (une adresse à la fois, sinon le PDF n'est pas joint)
+  function openMessagesFallback(SmsComposer, addresses, text, attachments){
+    var list = addresses.slice();
+    function next(){
+      if (!list.length) return;
+      var to = list.shift();
+      SmsComposer.composeSms({ to: to, body: text, attachments: attachments })
+        .then(function(){
+          if (list.length){
+            var onBack = function(){
+              if (document.visibilityState !== 'visible') return;
+              document.removeEventListener('visibilitychange', onBack);
+              setTimeout(function(){
+                if (window.confirm('Envoyer maintenant à ' + list[0] + ' ?')) next();
+              }, 300);
+            };
+            document.addEventListener('visibilitychange', onBack);
+          }
+        })
+        .catch(function(err){ window.alert("Ouverture de Messages impossible :\n" + errDetail(err)); });
+    }
+    next();
   }
 
   // ---------- wiring: global ----------
