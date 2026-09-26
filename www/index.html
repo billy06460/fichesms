@@ -1131,7 +1131,7 @@
   function lsSet(k, v){ try { localStorage.setItem(k, v); return true; } catch(e){ return false; } }
   function getDestEmail2(){ return lsGet(EMAIL2_KEY); }
   function getDestEmails(){
-    return [getDestEmail(), getDestEmail2()].filter(function(e){ return !!e; });
+    return [getDestEmail(), getDestEmail2()].filter(function(e){ return !!e && isAllowedEmail(e); });
   }
   function getOrigin(){ return lsGet(ORIGIN_KEY) || DEFAULT_ORIGIN; }
   function getAccent(){
@@ -1197,6 +1197,13 @@
       PDF_COLORS.warnBg = p.warnBg.map(Math.round);
       PDF_COLORS.onAccent = p.ink;
     }
+  }
+
+  // Seules les adresses du domaine justice.fr sont acceptées
+  var ALLOWED_DOMAIN = "justice.fr";
+  function isAllowedEmail(v){
+    v = String(v || '').trim().toLowerCase();
+    return isValidEmail(v) && v.slice(-(ALLOWED_DOMAIN.length + 1)) === '@' + ALLOWED_DOMAIN;
   }
 
   function isValidEmail(v){
@@ -1864,11 +1871,11 @@
       '<div class="modal-backdrop" id="setBackdrop">' +
         '<div class="modal settings-modal">' +
           '<h3>Paramètres</h3>' +
-          '<p>Chaque fiche validée est envoyée par MMS, depuis l\'application Messages, vers la ou les adresses ci-dessous, avec le PDF en pièce jointe.</p>' +
+          '<p>Chaque fiche validée est envoyée par MMS, depuis l\'application Messages, vers la ou les adresses ci-dessous, avec le PDF en pièce jointe. Seules les adresses @justice.fr sont acceptées.</p>' +
           '<div class="field"><label for="set-email">Adresse email</label>' +
-            '<input type="email" inputmode="email" autocapitalize="off" id="set-email" value="' + esc(getDestEmail()) + '" placeholder="contact@societe.fr"></div>' +
+            '<input type="email" inputmode="email" autocapitalize="off" id="set-email" value="' + esc(getDestEmail()) + '" placeholder="prenom.nom@justice.fr"></div>' +
           '<div class="field"><label for="set-email2">2e adresse email <span class="opt">(facultatif)</span></label>' +
-            '<input type="email" inputmode="email" autocapitalize="off" id="set-email2" value="' + esc(getDestEmail2()) + '" placeholder="autre@societe.fr"></div>' +
+            '<input type="email" inputmode="email" autocapitalize="off" id="set-email2" value="' + esc(getDestEmail2()) + '" placeholder="prenom.nom@justice.fr"></div>' +
           '<div class="field"><label for="set-origin">Origine</label>' +
             '<input type="text" id="set-origin" value="' + esc(getOrigin()) + '" placeholder="' + esc(DEFAULT_ORIGIN) + '"></div>' +
           '<div class="field"><label>Couleur</label>' +
@@ -1913,8 +1920,18 @@
       var e1 = document.getElementById('set-email').value.trim();
       var e2 = document.getElementById('set-email2').value.trim();
       var origin = document.getElementById('set-origin').value.trim();
-      if (e1 && !isValidEmail(e1)){ showToast('Adresse email invalide.'); return; }
-      if (e2 && !isValidEmail(e2)){ showToast('2e adresse email invalide.'); return; }
+      if (e1 && !isAllowedEmail(e1)){
+        showToast('Adresse refusée : seules les adresses @justice.fr sont acceptées.', 4000);
+        document.getElementById('set-email').focus();
+        return;
+      }
+      if (e2 && !isAllowedEmail(e2)){
+        showToast('2e adresse refusée : seules les adresses @justice.fr sont acceptées.', 4000);
+        document.getElementById('set-email2').focus();
+        return;
+      }
+      e1 = e1.toLowerCase();
+      e2 = e2.toLowerCase();
       if (!e1 && e2){ e1 = e2; e2 = ""; }
       if (e2 && e2.toLowerCase() === e1.toLowerCase()) e2 = "";
       setDestEmail(e1);
@@ -2525,6 +2542,13 @@
   // adresse (fiche PDF jointe), sans ouvrir l'application Messages.
   function sendMissionBySms(m){
     var emails = getDestEmails();
+    var rejected = [getDestEmail(), getDestEmail2()].filter(function(e){ return !!e && !isAllowedEmail(e); });
+    if (rejected.length){
+      window.alert("Adresse(s) non autorisée(s) :\n" + rejected.join('\n') +
+        "\n\nSeules les adresses @justice.fr sont acceptées. Corrigez-les dans les paramètres.");
+      openSettingsModal(function(){ sendMissionBySms(m); });
+      return;
+    }
     if (!emails.length){
       showToast("Définissez d'abord l'adresse email de destination.");
       openSettingsModal(function(){ sendMissionBySms(m); });
