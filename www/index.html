@@ -628,6 +628,15 @@
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .settings-modal { max-height: calc(100vh - 40px); overflow-y: auto; }
   .settings-modal .opt { font-weight: normal; color: var(--text-muted); }
+  .send-log { margin: 4px 0 16px; font-size: 13px; }
+  .send-log summary { cursor: pointer; font-weight: 600; color: var(--text-muted); }
+  .send-log ul { list-style: none; padding: 0; margin: 8px 0 0; }
+  .send-log li { padding: 7px 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 1px; }
+  .send-log li b { font-weight: 600; word-break: break-all; }
+  .send-log li.ok b { color: var(--success); }
+  .send-log li.ko b { color: var(--danger); }
+  .send-log li span { color: var(--text-muted); }
+  .send-log li small { color: var(--text); word-break: break-word; }
   .swatches { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 4px; }
   .swatch {
     width: 34px; height: 34px; border-radius: 50%; padding: 0; cursor: pointer;
@@ -1860,6 +1869,21 @@
     { name: 'Ardoise', hex: '#4A5561' }
   ];
 
+  function renderSendLog(){
+    var log = getSendLog();
+    if (!log.length) return '';
+    var rows = log.slice(0, 10).map(function(e){
+      var d = new Date(e.at);
+      var when = isNaN(d) ? '' : d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      return '<li class="' + (e.ok ? 'ok' : 'ko') + '">' +
+        '<b>' + (e.ok ? '✓' : '✗') + ' ' + esc(e.to) + '</b>' +
+        '<span>' + esc(when) + (e.plate ? ' — ' + esc(e.plate) : '') + (e.attempts > 1 ? ' — ' + e.attempts + ' essais' : '') + '</span>' +
+        (e.info ? '<small>' + esc(e.info) + '</small>' : '') +
+      '</li>';
+    }).join('');
+    return '<details class="send-log"><summary>Derniers envois</summary><ul>' + rows + '</ul></details>';
+  }
+
   function openSettingsEditModal(afterSave){
     var root = document.getElementById('modalRoot');
     var savedAccent = getAccent();
@@ -1871,7 +1895,7 @@
       '<div class="modal-backdrop" id="setBackdrop">' +
         '<div class="modal settings-modal">' +
           '<h3>Paramètres</h3>' +
-          '<p>Chaque fiche validée est envoyée par MMS, depuis l\'application Messages, vers la ou les adresses ci-dessous, avec le PDF en pièce jointe. Seules les adresses @justice.fr sont acceptées.</p>' +
+          '<p>Chaque fiche validée est envoyée automatiquement par MMS vers la ou les adresses ci-dessous, avec le PDF en pièce jointe. Seules les adresses @justice.fr sont acceptées.</p>' +
           '<div class="field"><label for="set-email">Adresse email</label>' +
             '<input type="email" inputmode="email" autocapitalize="off" id="set-email" value="' + esc(getDestEmail()) + '" placeholder="prenom.nom@justice.fr"></div>' +
           '<div class="field"><label for="set-email2">2e adresse email <span class="opt">(facultatif)</span></label>' +
@@ -1882,6 +1906,7 @@
             '<div class="swatches">' + swatches +
               '<label class="swatch swatch-custom" title="Autre couleur"><input type="color" id="set-color" value="' + savedAccent.toLowerCase() + '" aria-label="Autre couleur"></label>' +
             '</div></div>' +
+          renderSendLog() +
           '<div class="modal-actions">' +
             '<button class="btn" id="setCancel">Annuler</button>' +
             '<button class="btn btn-primary" id="setSave">Enregistrer</button>' +
@@ -2538,6 +2563,26 @@
 
   var sendingInProgress = false;
 
+  // ---------- journal des derniers envois (visible dans les paramètres) ----------
+  var SEND_LOG_KEY = "carnet_de_bord_send_log";
+  function getSendLog(){
+    try { return JSON.parse(localStorage.getItem(SEND_LOG_KEY) || '[]'); } catch(e){ return []; }
+  }
+  function addSendLog(entries){
+    var log = entries.concat(getSendLog()).slice(0, 20);
+    try { localStorage.setItem(SEND_LOG_KEY, JSON.stringify(log)); } catch(e){}
+  }
+  function logFromResults(m, results){
+    var when = new Date().toISOString();
+    addSendLog(results.map(function(r){
+      return {
+        at: when, plate: m.plate || '', to: r.to, ok: !!r.ok,
+        attempts: r.attempts || null,
+        info: r.ok ? (r.detail || '') : (r.error || ('code ' + r.code))
+      };
+    }));
+  }
+
   // Envoi 100 % automatique : l'app fabrique et envoie elle-même un MMS par
   // adresse (fiche PDF jointe), sans ouvrir l'application Messages.
   function sendMissionBySms(m){
@@ -2586,6 +2631,7 @@
     }).then(function(res){
       setBusy(false);
       var results = (res && res.results) || [];
+      logFromResults(m, results);
       var ok = results.filter(function(r){ return r.ok; });
       var failed = results.filter(function(r){ return !r.ok; });
       if (!failed.length){
@@ -2596,13 +2642,16 @@
           : 'Fiche envoyée par MMS à ' + ok[0].to + '.', 5000);
         return;
       }
+      showToast('Envoi incomplet : détail dans Paramètres > Derniers envois.', 5000);
       var msg = (ok.length ? 'Envoyé à : ' + ok.map(function(r){ return r.to; }).join(', ') + '\n\n' : '') +
         'Échec pour :\n' + failed.map(function(r){ return '• ' + r.to + ' — ' + (r.error || ('code ' + r.code)); }).join('\n') +
         '\n\nOuvrir l\'application Messages pour envoyer manuellement ?';
       if (window.confirm(msg)) openMessagesFallback(SmsComposer, failed.map(function(r){ return r.to; }), text, attachments);
     }).catch(function(err){
       setBusy(false);
+      showToast("Échec de l'envoi : détail dans Paramètres > Derniers envois.", 5000);
       console.error('sendMms failed', err);
+      addSendLog([{ at: new Date().toISOString(), plate: m.plate || '', to: emails.join(', '), ok: false, info: errDetail(err) }]);
       var msg = "L'envoi automatique a échoué :\n" + errDetail(err) + "\n\nOuvrir l'application Messages pour envoyer manuellement ?";
       if (window.confirm(msg)) openMessagesFallback(SmsComposer, emails, text, attachments);
     });
