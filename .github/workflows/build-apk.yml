@@ -1,0 +1,110 @@
+name: Build Android APK
+
+# Se declenche automatiquement a chaque envoi sur la branche "main",
+# et peut aussi etre lance manuellement depuis l'onglet Actions de GitHub.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Installer le JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # Le SDK Android est deja preinstalle sur les machines GitHub (ubuntu-latest),
+      # avec les licences deja acceptees : pas besoin d'etape supplementaire ici.
+      # (une etape "setup-android" supplementaire a deja cause un echec par le passe
+      #  car elle tentait de telecharger un composant "tools" obsolete)
+
+      - name: Installer les dependances npm
+        run: npm install
+
+      - name: Ajouter la plateforme Android
+        run: npx cap add android
+
+      - name: Installer le plugin SMS natif (maison)
+        run: |
+          PKG_DIR=android/app/src/main/java/com/prejmarseille/carnetdebord
+          mkdir -p "$PKG_DIR"
+          # remplace la MainActivity generee par celle qui enregistre le plugin SMS
+          find android/app/src/main -name 'MainActivity.*' -delete
+          cp native-android/*.java "$PKG_DIR"/
+          # chemins du FileProvider (inclut le cache, ou sont ecrites les pieces jointes)
+          mkdir -p android/app/src/main/res/xml
+          cp native-android/file_paths.xml android/app/src/main/res/xml/file_paths.xml
+          grep -q "fileprovider" android/app/src/main/AndroidManifest.xml || { echo "FileProvider absent du manifeste"; exit 1; }
+          # autorisation d'envoi automatique des MMS
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -q "android.permission.SEND_SMS" "$MANIFEST" || sed -i 's#</manifest>#    <uses-permission android:name="android.permission.SEND_SMS" />\n</manifest>#' "$MANIFEST"
+          grep -q "android.permission.SEND_SMS" "$MANIFEST" || { echo "Permission SEND_SMS non ajoutee"; exit 1; }
+          cat "$MANIFEST"
+
+      - name: Generer l'icone de l'app
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff'
+
+      - name: Synchroniser le code web et les plugins natifs
+        run: npx cap sync android
+
+      - name: Autoriser l'execution de gradlew
+        run: chmod +x android/gradlew
+
+      # Numero de version qui augmente a chaque build : Android accepte ainsi
+      # la nouvelle APK comme une mise a jour de la precedente.
+      - name: Numero de version automatique
+        run: |
+          sed -i -E 's/versionCode [0-9]+/versionCode ${{ github.run_number }}/; s/versionName "[^"]*"/versionName "1.${{ github.run_number }}"/' android/app/build.gradle
+          grep -E "versionCode|versionName" android/app/build.gradle
+
+      # Toujours la MEME cle de signature (stockee dans les secrets GitHub).
+      # Sans cela, chaque build etait signe avec une cle differente et Android
+      # refusait la mise a jour ("conflit avec un package existant").
+      - name: Preparer la cle de signature
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Secret KEYSTORE_BASE64 manquant (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/carnet.keystore"
+
+      - name: Compiler l'APK (signee avec la cle fixe)
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Secret KEYSTORE_PASSWORD manquant (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          ./gradlew assembleDebug --stacktrace \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/carnet.keystore" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias=carnetdebord \
+            -Pandroid.injected.signing.key.password="$KEYSTORE_PASSWORD"
+
+      - name: Verifier la signature de l'APK
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$APKSIGNER" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Mettre l'APK a disposition en telechargement
+        uses: actions/upload-artifact@v4
+        with:
+          name: carnet-de-bord-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
