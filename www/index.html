@@ -2557,7 +2557,7 @@
       return doc ? blobToBase64(doc.output('blob')) : null;
     }).then(function(b64){
       if (b64) attachments.push({ data: b64, name: pdfFilename });
-      showToast(emails.length > 1 ? 'Envoi des 2 MMS en cours…' : 'Envoi du MMS en cours…', 60000);
+      showToast(emails.length > 1 ? 'Envoi des 2 MMS en cours… (jusqu\'à 1 minute)' : 'Envoi du MMS en cours…', 180000);
       return SmsComposer.sendMms({ to: emails, subject: subject.trim(), body: text, attachments: attachments });
     }).then(function(res){
       setBusy(false);
