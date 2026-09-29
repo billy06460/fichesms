@@ -340,7 +340,8 @@
 
 
   /* ---------- Thème sombre imposé + écran d'accueil avec sceau en filigrane ---------- */
-  :root { color-scheme: dark; }
+  :root { --card-glass: rgba(255, 255, 255, 0.86); }
+  :root[data-theme="dark"] { --card-glass: rgba(28, 31, 36, 0.82); }
 
   /* Logo retiré de l'en-tête : titre seul, centré (un appui ouvre les paramètres) */
   .brand-mark { display: none !important; }
@@ -364,13 +365,46 @@
   }
   body.view-home .mission-list { position: relative; }
   body.view-home .mission-card {
-    background: rgba(28, 31, 36, 0.82);
+    background: var(--card-glass);
     border: 1px solid var(--border);
     margin-bottom: 8px;
     -webkit-backdrop-filter: blur(2px);
     backdrop-filter: blur(2px);
   }
   body.view-home .empty-list { display: none; }
+
+  /* Roue dentée (réglages d'affichage) */
+  header.topbar { position: relative; }
+  .btn-gear {
+    position: absolute;
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+  }
+  .btn-gear:active { background: var(--panel-2); }
+  .seg-theme {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    background: var(--panel-2); padding: 4px;
+    border-radius: 10px; border: 1px solid var(--border);
+  }
+  .seg-theme button {
+    border: 1px solid transparent; background: transparent; color: var(--text-muted);
+    font: inherit; font-weight: 600; font-size: 14px;
+    padding: 9px 8px; border-radius: 7px; cursor: pointer;
+  }
+  .seg-theme button.on {
+    background: var(--panel); color: var(--text);
+    border-color: var(--border); box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  }
+  .pdf-preview { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12.5px; color: var(--text-muted); }
+  .pdf-preview .band { border-radius: 4px; padding: 7px 10px; font-weight: 700; font-size: 10.5px; white-space: nowrap; }
 
   /* Mention discrète en bas de l'écran principal (texte fixe) */
   .credit { display: none; }
@@ -780,6 +814,9 @@
       <div class="topbar-actions">
         <button class="btn btn-primary" id="btnNewTop">+ Nouvelle fiche</button>
       </div>
+      <button type="button" class="btn-gear" id="btnDisplay" title="Affichage" aria-label="Réglages d'affichage">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
     </div>
   </header>
 
@@ -1259,9 +1296,19 @@
     return [getDestEmail(), getDestEmail2()].filter(function(e){ return !!e && isAllowedEmail(e); });
   }
   function getOrigin(){ return lsGet(ORIGIN_KEY) || DEFAULT_ORIGIN; }
-  function getAccent(){
-    var v = lsGet(ACCENT_KEY);
-    return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toUpperCase() : DEFAULT_ACCENT;
+  function validHex(v){ return /^#[0-9a-fA-F]{6}$/.test(v || '') ? v.toUpperCase() : ''; }
+  // Couleur du PDF : réglée par le responsable (reprend l'ancienne couleur unique)
+  function getPdfAccent(){ return validHex(lsGet(ACCENT_KEY)) || DEFAULT_ACCENT; }
+  // Couleur de l'écran : réglée par chaque utilisateur (roue dentée)
+  var SCREEN_ACCENT_KEY = "carnet_de_bord_screen_accent";
+  var THEME_KEY = "carnet_de_bord_theme";
+  function getScreenAccent(){ return validHex(lsGet(SCREEN_ACCENT_KEY)) || validHex(lsGet(ACCENT_KEY)) || DEFAULT_ACCENT; }
+  function getTheme(){ return lsGet(THEME_KEY) === 'light' ? 'light' : 'dark'; }
+  function applyTheme(theme){
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.style.colorScheme = theme;
+    var meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.setAttribute('content', theme);
   }
 
   // ---------- couleur d'accent personnalisable ----------
@@ -1314,7 +1361,11 @@
       document.head.appendChild(tag);
     }
     tag.textContent = css;
-    // Couleurs du PDF
+  }
+
+  // Couleur du PDF uniquement (n'affecte pas l'écran)
+  function applyPdfAccent(hex){
+    var p = accentPalette(hex);
     if (typeof PDF_COLORS !== 'undefined'){
       PDF_COLORS.accent = p.base.map(Math.round);
       PDF_COLORS.accentStrong = p.strong.map(Math.round);
@@ -2052,17 +2103,83 @@
     return '<details class="send-log"><summary>Derniers envois</summary><ul>' + rows + '</ul></details>';
   }
 
-  function openSettingsEditModal(afterSave){
-    var root = document.getElementById('modalRoot');
-    var savedAccent = getAccent();
-    var chosen = savedAccent;
-    var swatches = ACCENT_PRESETS.map(function(c){
+  function swatchButtons(){
+    return ACCENT_PRESETS.map(function(c){
       return '<button type="button" class="swatch" data-hex="' + c.hex + '" title="' + c.name + '" aria-label="' + c.name + '" style="background:' + c.hex + '"></button>';
     }).join('');
+  }
+
+  function openDisplayModal(){
+    var root = document.getElementById('modalRoot');
+    var savedTheme = getTheme(), savedAccent = getScreenAccent();
+    var theme = savedTheme, chosen = savedAccent;
+    root.innerHTML =
+      '<div class="modal-backdrop" id="dispBackdrop">' +
+        '<div class="modal settings-modal">' +
+          '<h3>Affichage</h3>' +
+          '<div class="field"><label>Fond</label>' +
+            '<div class="seg-theme" role="radiogroup" aria-label="Fond">' +
+              '<button type="button" role="radio" data-theme-choice="dark">🌙 Sombre</button>' +
+              '<button type="button" role="radio" data-theme-choice="light">☀️ Clair</button>' +
+            '</div></div>' +
+          '<div class="field"><label>Couleur des boutons et repères</label>' +
+            '<div class="swatches">' + swatchButtons() +
+              '<label class="swatch swatch-custom" title="Autre couleur"><input type="color" id="disp-color" value="' + savedAccent.toLowerCase() + '" aria-label="Autre couleur"></label>' +
+            '</div></div>' +
+          '<div class="modal-actions">' +
+            '<button class="btn" id="dispCancel">Annuler</button>' +
+            '<button class="btn btn-primary" id="dispSave">Enregistrer</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    function mark(){
+      Array.prototype.forEach.call(root.querySelectorAll('[data-theme-choice]'), function(b){
+        var on = b.getAttribute('data-theme-choice') === theme;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      Array.prototype.forEach.call(root.querySelectorAll('.swatch[data-hex]'), function(el){
+        el.classList.toggle('selected', el.getAttribute('data-hex').toUpperCase() === chosen);
+      });
+      var custom = root.querySelector('.swatch-custom');
+      var isPreset = ACCENT_PRESETS.some(function(c){ return c.hex.toUpperCase() === chosen; });
+      custom.classList.toggle('selected', !isPreset);
+      custom.style.background = isPreset ? '' : chosen;
+    }
+    function preview(){ applyTheme(theme); applyAccent(chosen); mark(); }
+    function close(restore){
+      if (restore){ applyTheme(savedTheme); applyAccent(savedAccent); }
+      root.innerHTML = "";
+    }
+
+    Array.prototype.forEach.call(root.querySelectorAll('[data-theme-choice]'), function(b){
+      b.addEventListener('click', function(){ theme = b.getAttribute('data-theme-choice'); preview(); });
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('.swatch[data-hex]'), function(el){
+      el.addEventListener('click', function(){ chosen = el.getAttribute('data-hex').toUpperCase(); preview(); });
+    });
+    document.getElementById('disp-color').addEventListener('input', function(e){ chosen = e.target.value.toUpperCase(); preview(); });
+    document.getElementById('dispCancel').addEventListener('click', function(){ close(true); });
+    document.getElementById('dispBackdrop').addEventListener('click', function(e){ if (e.target.id === 'dispBackdrop') close(true); });
+    document.getElementById('dispSave').addEventListener('click', function(){
+      lsSet(THEME_KEY, theme);
+      lsSet(SCREEN_ACCENT_KEY, chosen);
+      close(false);
+      showToast('Affichage enregistré.');
+    });
+    mark();
+  }
+
+  function openSettingsEditModal(afterSave){
+    var root = document.getElementById('modalRoot');
+    var savedAccent = getPdfAccent();
+    var chosen = savedAccent;
+    var swatches = swatchButtons();
     root.innerHTML =
       '<div class="modal-backdrop" id="setBackdrop">' +
         '<div class="modal settings-modal">' +
-          '<h3>Paramètres</h3>' +
+          '<h3>Paramètres responsable</h3>' +
           '<p>Chaque fiche validée est envoyée automatiquement par MMS vers la ou les adresses ci-dessous, avec le PDF en pièce jointe. Seules les adresses @justice.fr sont acceptées.</p>' +
           '<div class="field"><label for="set-email">Adresse email</label>' +
             '<input type="email" inputmode="email" autocapitalize="off" id="set-email" value="' + esc(getDestEmail()) + '" placeholder="prenom.nom@justice.fr"></div>' +
@@ -2070,10 +2187,12 @@
             '<input type="email" inputmode="email" autocapitalize="off" id="set-email2" value="' + esc(getDestEmail2()) + '" placeholder="prenom.nom@justice.fr"></div>' +
           '<div class="field"><label for="set-origin">Unité</label>' +
             '<input type="text" id="set-origin" value="' + esc(getOrigin()) + '" placeholder="' + esc(DEFAULT_ORIGIN) + '"></div>' +
-          '<div class="field"><label>Couleur</label>' +
+          '<div class="field"><label>Couleur du PDF</label>' +
             '<div class="swatches">' + swatches +
               '<label class="swatch swatch-custom" title="Autre couleur"><input type="color" id="set-color" value="' + savedAccent.toLowerCase() + '" aria-label="Autre couleur"></label>' +
-            '</div></div>' +
+            '</div>' +
+            '<div class="pdf-preview"><span class="band" id="pdfBand">Carnet de bord — Fiche</span>Aperçu du bandeau du PDF</div>' +
+          '</div>' +
           renderSendLog() +
           '<div class="modal-actions">' +
             '<button class="btn" id="setCancel">Annuler</button>' +
@@ -2091,13 +2210,19 @@
       custom.classList.toggle('selected', !isPreset);
       custom.style.background = isPreset ? '' : chosen;
     }
+    function paintBand(){
+      var band = document.getElementById('pdfBand');
+      if (!band) return;
+      band.style.background = chosen;
+      var ink = inkFor(hexToRgb(chosen));
+      band.style.color = 'rgb(' + ink.join(',') + ')';
+    }
     function choose(hex){
       chosen = hex.toUpperCase();
-      applyAccent(chosen);  // aperçu immédiat
+      paintBand();          // aperçu du bandeau seulement : l'écran ne change pas
       markSelected();
     }
-    function close(restore){
-      if (restore) applyAccent(savedAccent);
+    function close(){
       root.innerHTML = "";
     }
 
@@ -2106,9 +2231,10 @@
     });
     document.getElementById('set-color').addEventListener('input', function(e){ choose(e.target.value); });
     markSelected();
+    paintBand();
 
-    document.getElementById('setCancel').addEventListener('click', function(){ close(true); });
-    document.getElementById('setBackdrop').addEventListener('click', function(e){ if (e.target.id === 'setBackdrop') close(true); });
+    document.getElementById('setCancel').addEventListener('click', function(){ close(); });
+    document.getElementById('setBackdrop').addEventListener('click', function(e){ if (e.target.id === 'setBackdrop') close(); });
     document.getElementById('setSave').addEventListener('click', function(){
       var e1 = document.getElementById('set-email').value.trim();
       var e2 = document.getElementById('set-email2').value.trim();
@@ -2131,8 +2257,8 @@
       lsSet(EMAIL2_KEY, e2);
       lsSet(ORIGIN_KEY, origin || DEFAULT_ORIGIN);
       lsSet(ACCENT_KEY, chosen);
-      applyAccent(chosen);
-      close(false);
+      applyPdfAccent(chosen);
+      close();
       showToast('Paramètres enregistrés.');
       if (afterSave && e1) afterSave();
     });
@@ -2155,7 +2281,9 @@
     warnBg: [251, 241, 222],
     onAccent: [255, 255, 255]
   };
-  applyAccent(getAccent());
+  applyTheme(getTheme());
+  applyAccent(getScreenAccent());
+  applyPdfAccent(getPdfAccent());
 
   function pdfSetFill(doc, rgb){ doc.setFillColor(rgb[0], rgb[1], rgb[2]); }
   function pdfSetDraw(doc, rgb){ doc.setDrawColor(rgb[0], rgb[1], rgb[2]); }
@@ -2971,6 +3099,7 @@
 
   // ---------- wiring: global ----------
   document.getElementById('btnSettings').addEventListener('click', function(){ openSettingsModal(); });
+  document.getElementById('btnDisplay').addEventListener('click', openDisplayModal);
   document.getElementById('btnNewTop').addEventListener('click', createMission);
 
   // Autosave lightly on blur of key fields to reduce data loss risk
