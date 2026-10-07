@@ -504,7 +504,7 @@
 
   .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
   .field label { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
-  .field input[type=text], .field input[type=email], .field input[type=number], .field input[type=date], .field select, .field textarea {
+  .field input[type=text], .field input[type=email], .field input[type=password], .field input[type=number], .field input[type=date], .field select, .field textarea {
     padding: 10px 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -753,6 +753,8 @@
   .settings-modal { max-height: calc(100vh - 40px); overflow-y: auto; }
   .settings-modal .opt { font-weight: normal; color: var(--text-muted); }
   .send-log { margin: 4px 0 16px; font-size: 13px; }
+  .code-change input + input { margin-top: 8px; }
+  .code-input:not(:placeholder-shown) { letter-spacing: 4px; }
   .sms-setup {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     margin: 8px 8px 2px; padding: 12px;
@@ -1277,17 +1279,14 @@
     return true;
   }
 
-  // Adresses de destination par défaut. Elles sont inscrites une seule fois
-  // (y compris sur une app déjà installée) ; le responsable peut ensuite les
-  // modifier dans ses paramètres sans qu'elles soient remises.
-  var DEFAULT_EMAILS = ["marouane.tliche@justice.fr", "jimmy.raczkiewicz@justice.fr"];
-  var DEFAULT_EMAILS_APPLIED_KEY = "carnet_de_bord_default_emails_v1";
-  (function applyDefaultEmails(){
+  // Les anciennes versions inscrivaient deux adresses par défaut : on les efface
+  // une seule fois sur les téléphones concernés (le responsable saisit les siennes).
+  (function removeOldDefaultEmails(){
     try {
-      if (localStorage.getItem(DEFAULT_EMAILS_APPLIED_KEY)) return;
-      localStorage.setItem("carnet_de_bord_dest_email", DEFAULT_EMAILS[0]);
-      localStorage.setItem("carnet_de_bord_dest_email2", DEFAULT_EMAILS[1]);
-      localStorage.setItem(DEFAULT_EMAILS_APPLIED_KEY, "1");
+      if (!localStorage.getItem("carnet_de_bord_default_emails_v1")) return;
+      localStorage.removeItem("carnet_de_bord_dest_email");
+      localStorage.removeItem("carnet_de_bord_dest_email2");
+      localStorage.removeItem("carnet_de_bord_default_emails_v1");
     } catch(e){}
   })();
 
@@ -2052,7 +2051,12 @@
   });
 
   // ---------- settings: emails, unité, couleur (password-protected) ----------
-  var SETTINGS_PASSWORD = "1402";
+  var DEFAULT_ACCESS_CODE = "0000";
+  var ACCESS_CODE_KEY = "carnet_de_bord_access_code";
+  function getAccessCode(){
+    var c = lsGet(ACCESS_CODE_KEY);
+    return /^\d{4,8}$/.test(c) ? c : DEFAULT_ACCESS_CODE;
+  }
 
   function openSettingsModal(afterSave){
     openPasswordGate(function(){ openSettingsEditModal(afterSave); });
@@ -2064,9 +2068,9 @@
       '<div class="modal-backdrop" id="pwBackdrop">' +
         '<div class="modal">' +
           '<h3>Accès protégé</h3>' +
-          '<p>Entrez le mot de passe pour modifier les paramètres.</p>' +
-          '<div class="field"><label for="pw-input">Mot de passe</label>' +
-            '<input type="password" id="pw-input" placeholder="••••" autocomplete="off"></div>' +
+          '<p>Entrez le code pour modifier les paramètres.</p>' +
+          '<div class="field"><label for="pw-input">Code</label>' +
+            '<input type="password" id="pw-input" class="code-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="••••" autocomplete="off"></div>' +
           '<div class="modal-actions">' +
             '<button class="btn" id="pwCancel">Annuler</button>' +
             '<button class="btn btn-primary" id="pwConfirm">Valider</button>' +
@@ -2077,11 +2081,11 @@
     document.getElementById('pwCancel').addEventListener('click', function(){ root.innerHTML = ""; });
     document.getElementById('pwBackdrop').addEventListener('click', function(e){ if (e.target.id === 'pwBackdrop') root.innerHTML = ""; });
     function check(){
-      if (input.value === SETTINGS_PASSWORD){
+      if (input.value === getAccessCode()){
         root.innerHTML = "";
         onSuccess();
       } else {
-        showToast('Mot de passe incorrect.');
+        showToast('Code incorrect.');
         input.value = "";
         input.focus();
       }
@@ -2207,6 +2211,10 @@
             '</div>' +
             '<div class="pdf-preview"><span class="band" id="pdfBand">Carnet de bord — Fiche</span>Aperçu du bandeau du PDF</div>' +
           '</div>' +
+          '<div class="field code-change"><label>Changer le code d\'accès <span class="opt">(facultatif)</span></label>' +
+            '<input type="password" id="set-code1" class="code-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Nouveau code (4 à 8 chiffres)" autocomplete="new-password">' +
+            '<input type="password" id="set-code2" class="code-input" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="Confirmer le nouveau code" autocomplete="new-password">' +
+          '</div>' +
           renderSendLog() +
           '<div class="modal-actions">' +
             '<button class="btn" id="setCancel">Annuler</button>' +
@@ -2263,6 +2271,23 @@
         document.getElementById('set-email2').focus();
         return;
       }
+      var c1 = document.getElementById('set-code1').value.trim();
+      var c2 = document.getElementById('set-code2').value.trim();
+      var codeChanged = false;
+      if (c1 || c2){
+        if (!/^\d{4,8}$/.test(c1)){
+          showToast('Le code doit comporter de 4 à 8 chiffres.', 4000);
+          document.getElementById('set-code1').focus();
+          return;
+        }
+        if (c1 !== c2){
+          showToast('Les deux codes ne sont pas identiques.', 4000);
+          document.getElementById('set-code2').value = '';
+          document.getElementById('set-code2').focus();
+          return;
+        }
+        codeChanged = c1 !== getAccessCode();
+      }
       e1 = e1.toLowerCase();
       e2 = e2.toLowerCase();
       if (!e1 && e2){ e1 = e2; e2 = ""; }
@@ -2272,8 +2297,9 @@
       lsSet(ORIGIN_KEY, origin || DEFAULT_ORIGIN);
       lsSet(ACCENT_KEY, chosen);
       applyPdfAccent(chosen);
+      if (codeChanged) lsSet(ACCESS_CODE_KEY, c1);
       close();
-      showToast('Paramètres enregistrés.');
+      showToast(codeChanged ? 'Paramètres enregistrés. Nouveau code actif.' : 'Paramètres enregistrés.', 3500);
       if (afterSave && e1) afterSave();
     });
   }
@@ -3063,9 +3089,10 @@
       if (!failed.length){
         m.lastSentAt = new Date().toISOString();
         saveMissions();
+        var via = 'par MMS';
         showToast(ok.length > 1
-          ? 'Fiche envoyée par MMS aux 2 adresses.'
-          : 'Fiche envoyée par MMS à ' + ok[0].to + '.', 5000);
+          ? 'Fiche envoyée ' + via + ' aux 2 adresses.'
+          : 'Fiche envoyée ' + via + ' à ' + ok[0].to + '.', 5000);
         return;
       }
       showToast('Envoi incomplet : détail dans Paramètres > Derniers envois.', 5000);
@@ -3110,6 +3137,14 @@
     }
     next();
   }
+
+  document.addEventListener('input', function(e){
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('code-input')){
+      var v = t.value.replace(/\D+/g, '').slice(0, 8);
+      if (v !== t.value) t.value = v;
+    }
+  });
 
   // ---------- wiring: global ----------
   document.getElementById('btnSettings').addEventListener('click', function(){ openSettingsModal(); });
